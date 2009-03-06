@@ -1,0 +1,7 @@
+//
+// Prefix header for all source files of the 'PostTunes' target in the 'PostTunes' project
+//
+
+#ifdef __OBJC__
+    #import <Cocoa/Cocoa.h>
+#endif
