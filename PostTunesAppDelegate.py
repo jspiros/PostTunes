@@ -10,13 +10,13 @@ import objc
 from urllib import urlencode
 from urllib2 import urlopen, URLError
 from base64 import b64encode
+from PyObjCTools import AppHelper
 from Foundation import *
 from AppKit import *
 from ScriptingBridge import *
 
 class PostTunesAppDelegate(NSObject):
 	preferencesWindow = objc.IBOutlet()
-	warnPreferences = objc.ivar(u"warnPreferences")
 	warnFailure = objc.ivar(u"warnFailure")
 	lastPersistentID = objc.ivar(u"lastPersistentID")
 	handlerURL = objc.ivar(u"handlerURL")
@@ -26,13 +26,32 @@ class PostTunesAppDelegate(NSObject):
 		self = super(PostTunesAppDelegate, self).init()
 		if not self:
 			return None
-		self.warnPreferences = True
 		self.warnFailure = True
 		self.lastPersistentID = None
 		self.handlerURL = None
 		self.secretKey = None
-		self.observeNote()
 		return self
+	
+	def awakeFromNib(self):
+		self.handlerURL = NSUserDefaults.standardUserDefaults().stringForKey_("handlerURL")
+		self.secretKey = NSUserDefaults.standardUserDefaults().stringForKey_("secretKey")
+		if not self.handlerURL:
+			self.runConfigurationAlert_title_description_(None, "In order for PostTunes to post tracks, you must set a Handler URL. The optional Secret Key may be used by the script at the Handler URL to validate your posts.")
+		self.observeNote()
+	
+	def runConfigurationAlert_title_description_(self, title, description):
+		if not title:
+			title = "PostTunes Configuration"
+		alert = NSAlert.alertWithMessageText_defaultButton_alternateButton_otherButton_informativeTextWithFormat_(title, "OK", "Quit PostTunes", None, description)
+		alert.setAccessoryView_(self.preferencesWindow.contentView().retain())
+		alert.setAlertStyle_(NSCriticalAlertStyle)
+		alertReturn = alert.runModal()
+		if alertReturn == NSAlertDefaultReturn:
+			self.handlerURL = NSUserDefaults.standardUserDefaults().stringForKey_("handlerURL")
+			if not self.handlerURL:
+				self.runConfigurationAlert_title_description_("PostTunes Handler URL Missing", "You must set a Handler URL for PostTunes to function.")
+		elif alertReturn == NSAlertAlternateReturn:
+			AppHelper.stopEventLoop()
 	
 	def observeNote(self):
 		NSDistributedNotificationCenter.defaultCenter().addObserver_selector_name_object_(self, "gotNotification:", "com.apple.iTunes.playerInfo", None)
@@ -56,13 +75,7 @@ class PostTunesAppDelegate(NSObject):
 								self.trackChanged_iTunesTrack_(noteInfo, iTunesTrack)
 								self.lastPersistentID = persistentID
 						else:
-							NSLog(u"Track Not Posted: You have not provided PostTunes with the Handler URL to use.")
-							if self.warnPreferences:
-								alert = NSAlert.alertWithMessageText_defaultButton_alternateButton_otherButton_informativeTextWithFormat_("Track Not Posted", "Open PostTunes Preferences", "Ignore", None, u"You have not provided PostTunes with the Handler URL to use.")
-								if alert.runModal() == NSAlertDefaultReturn:
-									self.preferencesWindow.makeKeyAndOrderFront_(self)
-								elif alert.runModal() == NSAlertAlternateReturn:
-									self.warnPreferences = False
+							self.runConfigurationAlert_title_description_("PostTunes Handler URL Missing", "PostTunes was unable to post a track due to the Handler URL being missing. You must set a Handler URL for PostTunes to function.")
 								
 			else:
 				self.lastPersistentID = None
@@ -87,10 +100,16 @@ class PostTunesAppDelegate(NSObject):
 		try:
 			urlopen(self.handlerURL, urlencode(trackData))
 		except URLError:
-			NSLog(u"PostTunes encountered an error when attempting to submit a track to: %s" % self.handlerURL)
+			description = (u"PostTunes encountered an error when attempting to post the track \"%s\" to your Handler URL." % trackData["title"])
+			NSLog(u"%s Handler URL: %s" % (description, self.handlerURL))
 			if self.warnFailure:
-				alert = NSAlert.alertWithMessageText_defaultButton_alternateButton_otherButton_informativeTextWithFormat_("Track Not Posted", "Open PostTunes Preferences", "Ignore", None, (u"PostTunes encountered an error when attempting to submit a track to:\n%s" % self.handlerURL))
-				if alert.runModal() == NSAlertDefaultReturn:
-					self.preferencesWindow.makeKeyAndOrderFront_(self)
-				elif alert.runModal() == NSAlertAlternateReturn:
+				alert = NSAlert.alertWithMessageText_defaultButton_alternateButton_otherButton_informativeTextWithFormat_("PostTunes Could Not Post Track", "OK", "Configure PostTunes", "Quit PostTunes", description)
+				alert.setAlertStyle_(NSCriticalAlertStyle)
+				alert.setShowsSuppressionButton_(True)
+				alertReturn = alert.runModal()
+				if alert.suppressionButton().state() == NSOnState:
 					self.warnFailure = False
+				if alertReturn == NSAlertAlternateReturn:
+					self.runConfigurationAlert_title_description_(None, (u"%s Please confirm your Handler URL." % description))
+				elif alertReturn == NSAlertOtherReturn:
+					AppHelper.stopEventLoop()
